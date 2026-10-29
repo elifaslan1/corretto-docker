@@ -7,13 +7,6 @@
 #       otherwise, versions.json isn't changed and used as source of truth
 #       For platform-specific versions, edit versions.json and run without args.
 #       CORRETTO_PACKAGE_RELEASE defaults to 1 for the new version format.
-#
-# Optional: UPDATE_PLATFORMS limits which platforms the args are applied to.
-#       Space-separated, any of: GENERIC_LINUX ALPINE AMAZON_LINUX AMAZON_LINUX_2023
-#       Defaults to all of them. Other platforms keep their versions.json value.
-# Ex (Amazon Linux images only):
-#       UPDATE_PLATFORMS="AMAZON_LINUX AMAZON_LINUX_2023" \
-#         ./bin/update-dockerfiles.sh 11.0.33.0.10 17.0.21.0.11 25.0.5.0.10
 ################################################################################
 set -xeou pipefail
 
@@ -109,35 +102,14 @@ update_amazon_linux() {
     update_native_dockerfile "./${major}/slim/al2/Dockerfile" "${canonical}" "${major}"
 }
 
-ALL_PLATFORMS="GENERIC_LINUX ALPINE AMAZON_LINUX AMAZON_LINUX_2023"
-# Platforms whose version is set from the args. Defaults to all of them.
-UPDATE_PLATFORMS="${UPDATE_PLATFORMS:-${ALL_PLATFORMS}}"
-for platform in ${UPDATE_PLATFORMS}; do
-    if [[ " ${ALL_PLATFORMS} " != *" ${platform} "* ]]; then
-        echo "Error: unknown platform '${platform}' in UPDATE_PLATFORMS. Valid: ${ALL_PLATFORMS}" >&2
-        exit 1
-    fi
-done
-PLATFORMS_JSON=$(printf '%s\n' ${UPDATE_PLATFORMS} | jq -R . | jq -s .)
-ALL_PLATFORMS_JSON=$(printf '%s\n' ${ALL_PLATFORMS} | jq -R . | jq -s .)
-
 cp versions.json tmp.json
 for version_input in "$@"; do
     major_version="${version_input%%.*}"
-    # A plain string entry means "all platforms have this version". When only some
-    # platforms are updated it is expanded into a per-platform map first.
     jq --arg major "${major_version}" --arg canonical "${version_input}" \
-       --argjson platforms "${PLATFORMS_JSON}" --argjson all "${ALL_PLATFORMS_JSON}" \
-       '.[$major] |= (
-          if type == "object" then .
-          elif ($platforms | length) == ($all | length) then .
-          else (. as $old | reduce $all[] as $p ({}; .[$p] = $old))
-          end
-          | if type == "object"
-            then reduce $platforms[] as $p (.; .[$p] = $canonical)
-            else $canonical
-            end
-        )' tmp.json > tmp-new.json
+       '.[$major] |= if type == "object" then
+          .GENERIC_LINUX = $canonical | .ALPINE = $canonical |
+          .AMAZON_LINUX = $canonical | .AMAZON_LINUX_2023 = $canonical
+        else $canonical end' tmp.json > tmp-new.json
     mv tmp-new.json tmp.json
 done
 mv tmp.json versions.json
